@@ -47,9 +47,6 @@ jobs:
       - name: Tag release
         if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref,'refs/heads/support-') }}
         uses: actions/github-script@v7
-        # this throws an error if the tag already exists. can't find a way around that without writing our own Github REST client or forking github's scripts repo.
-        # would prefer to do this before any of these jobs run, but we need to know the mattermost version which only happens after a clone. could potentially
-        # setup a separate job which does clone + tag, but felt like this was "good enough" for now.
         continue-on-error: true
         with:
           github-token: ${{ secrets.GH_TOKEN }}
@@ -61,13 +58,42 @@ jobs:
               sha: context.sha
             })
 
+      - name: Check if latest version
+        if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref,'refs/heads/support-') }}
+        id: check_version
+        run: |
+          # Get all release tags
+          TAGS=$(curl -s -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/releases" | \
+            jq -r '.[].tag_name' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || echo "")
+          
+          # Add current version to the list (ensure it has v prefix)
+          CURRENT_VERSION="${{ env.MATTERMOST_VERSION }}"
+          if [[ ! $CURRENT_VERSION == v* ]]; then
+            CURRENT_VERSION="v$CURRENT_VERSION"
+          fi
+          ALL_VERSIONS="$TAGS"$'\n'"$CURRENT_VERSION"
+          
+          # Sort versions (removing v prefix for sorting, then adding it back)
+          HIGHEST_VERSION=$(echo "$ALL_VERSIONS" | sed 's/^v//' | sort -t. -k 1,1n -k 2,2n -k 3,3n | tail -n 1)
+          HIGHEST_VERSION="v$HIGHEST_VERSION"
+          
+          # Check if current version is the highest
+          if [ "$HIGHEST_VERSION" = "$CURRENT_VERSION" ]; then
+            echo "make_latest=true" >> $GITHUB_OUTPUT
+          else
+            echo "make_latest=false" >> $GITHUB_OUTPUT
+          fi
+          echo "Current version: $CURRENT_VERSION"
+          echo "Highest version: $HIGHEST_VERSION"
+
       - name: Create Github release
         if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref,'refs/heads/support-') }}
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ secrets.GH_TOKEN }}
           tag_name: ${{ env.MATTERMOST_VERSION }}
+          make_latest: ${{ steps.check_version.outputs.make_latest }}
           files: |
             mattermost-${{ env.MATTERMOST_VERSION }}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz
             mattermost-${{ env.MATTERMOST_VERSION }}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz.sha512sum
-  
