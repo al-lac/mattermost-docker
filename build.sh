@@ -108,6 +108,18 @@ sed -i -e 's#--verbose#--display minimal#' \
 # build Mattermost server
 patch --directory="${HOME}/go/src/github.com/mattermost/mattermost/server" \
 	--strip=1 -t < "/root/build-release.patch"
+
+# Work around 32-bit ARM type mismatch in some Mattermost releases.
+# Keep this resilient so amd64/arm64 builds do not fail if upstream changes.
+if [ "$(go env GOARCH)" = "arm" ]; then
+	MEMORY_LINUX_FILE="${HOME}/go/src/github.com/mattermost/mattermost/server/channels/app/platform/memory_linux.go"
+	if grep -Fq 'return info.Totalram * uint64(info.Unit)' "${MEMORY_LINUX_FILE}"; then
+		sed -i \
+			-e 's#return info.Totalram \* uint64(info.Unit)#return uint64(info.Totalram) * uint64(info.Unit)#' \
+			"${MEMORY_LINUX_FILE}"
+	fi
+fi
+
 sed -i \
 	-e 's#go generate#env --unset=GOOS --unset=GOARCH go generate#' \
 	-e 's#$(GO) generate#env --unset=GOOS --unset=GOARCH go generate#' \
