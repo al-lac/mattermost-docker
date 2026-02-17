@@ -11,15 +11,3 @@ index faa027239..df40f0c68 100644
  	cp -RL fonts $(DIST_PATH)
  	cp -RL templates $(DIST_PATH)
  	rm -rf $(DIST_PATH)/templates/*.mjml $(DIST_PATH)/templates/partials/
-
-diff --git a/channels/app/platform/memory_linux.go b/channels/app/platform/memory_linux.go
---- a/channels/app/platform/memory_linux.go
-+++ b/channels/app/platform/memory_linux.go
-@@ -20,7 +20,7 @@
- 	var info syscall.Sysinfo_t
- 	if err := syscall.Sysinfo(&info); err != nil {
- 		return 0
- 	}
--	return info.Totalram * uint64(info.Unit)
-+	return uint64(info.Totalram) * uint64(info.Unit)
- }
