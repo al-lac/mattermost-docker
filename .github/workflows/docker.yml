@@ -10,6 +10,12 @@ on:
         description: Tag to publish (for manual reruns)
         required: true
         type: string
+  workflow_call:
+    inputs:
+      tag:
+        description: Tag to publish
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -29,7 +35,7 @@ jobs:
         id: meta
         run: |
           TAG="${{ github.ref_name }}"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "${{ github.event_name }}" = "workflow_call" ]; then
             TAG="${{ inputs.tag }}"
           fi
           if [[ "$TAG" != v* ]]; then

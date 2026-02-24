@@ -80,6 +80,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/support-'))
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
 
     steps:
       - name: Clone repository
@@ -89,10 +91,14 @@ jobs:
         run: cat mattermost-release.txt >> "$GITHUB_ENV"
 
       - name: Normalize tag name
+        id: tag
         run: |
-          if [[ "${MATTERMOST_VERSION}" != v* ]]; then
-            echo "MATTERMOST_VERSION=v${MATTERMOST_VERSION}" >> "$GITHUB_ENV"
+          TAG="${MATTERMOST_VERSION}"
+          if [[ "${TAG}" != v* ]]; then
+            TAG="v${TAG}"
           fi
+          echo "MATTERMOST_VERSION=${TAG}" >> "$GITHUB_ENV"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Download artifacts
         uses: actions/download-artifact@v4
@@ -105,7 +111,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: ${{ env.MATTERMOST_VERSION }}
+          tag_name: ${{ steps.tag.outputs.tag }}
           target_commitish: ${{ github.sha }}
           make_latest: ${{ github.ref == 'refs/heads/main' && 'true' || 'false' }}
           files: |
@@ -115,3 +121,11 @@ jobs:
             dist/mattermost-${{ env.MATTERMOST_VERSION }}-linux-arm64.tar.gz.sha512sum
             dist/mattermost-${{ env.MATTERMOST_VERSION }}-linux-amd64.tar.gz
             dist/mattermost-${{ env.MATTERMOST_VERSION }}-linux-amd64.tar.gz.sha512sum
+
+  docker_publish:
+    needs: release
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/support-'))
+    uses: ./.github/workflows/docker.yml
+    with:
+      tag: ${{ needs.release.outputs.tag }}
+    secrets: inherit
