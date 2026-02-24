@@ -1,23 +1,33 @@
 name: Package and release
+
 on:
   push:
-    branches: 
+    branches:
       - main
       - support-**
   pull_request:
-    branches: 
+    branches:
       - main
       - support-**
+  workflow_dispatch:
 
 env:
   DEBIAN_RELEASE: bookworm
   DOCKER_PWD: /root
   DOCKER_IMAGE: debian:${DEBIAN_RELEASE}
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: linux
@@ -32,68 +42,76 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set environment from runtime properties
-        run: |
-          cat mattermost-release.txt >> $GITHUB_ENV
+        run: cat mattermost-release.txt >> "$GITHUB_ENV"
 
       - name: Pull docker image
-        run: 'docker pull "${{ env.DOCKER_IMAGE }}"'
+        run: docker pull "${{ env.DOCKER_IMAGE }}"
 
       - name: Build
         env:
           GOOS: ${{ matrix.os }}
           GOARCH: ${{ matrix.arch }}
-        run: docker run --mount="type=bind,source=$PWD,destination=${{ env.DOCKER_PWD }}" --rm=true --tty=true --workdir="${{ env.DOCKER_PWD }}" -e DEBIAN_RELEASE -e MATTERMOST_VERSION -e MMCTL_RELEASE -e MM_FOCALBOARD_RELEASE -e GOOS -e GOARCH -e GO_VERSION "${{ env.DOCKER_IMAGE }}" ./build.sh
-
-      - name: Tag release
-        if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref,'refs/heads/support-') }}
-        uses: actions/github-script@v7
-        continue-on-error: true
-        with:
-          github-token: ${{ secrets.GH_TOKEN }}
-          script: |
-            github.rest.git.createRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: 'refs/tags/${{ env.MATTERMOST_VERSION }}',
-              sha: context.sha
-            })
-
-      - name: Check if latest version
-        if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref,'refs/heads/support-') }}
-        id: check_version
         run: |
-          # Get all release tags
-          TAGS=$(curl -s -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/releases" | \
-            jq -r '.[].tag_name' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || echo "")
-          
-          # Add current version to the list (ensure it has v prefix)
-          CURRENT_VERSION="${{ env.MATTERMOST_VERSION }}"
-          if [[ ! $CURRENT_VERSION == v* ]]; then
-            CURRENT_VERSION="v$CURRENT_VERSION"
-          fi
-          ALL_VERSIONS="$TAGS"$'\n'"$CURRENT_VERSION"
-          
-          # Sort versions (removing v prefix for sorting, then adding it back)
-          HIGHEST_VERSION=$(echo "$ALL_VERSIONS" | sed 's/^v//' | sort -t. -k 1,1n -k 2,2n -k 3,3n | tail -n 1)
-          HIGHEST_VERSION="v$HIGHEST_VERSION"
-          
-          # Check if current version is the highest
-          if [ "$HIGHEST_VERSION" = "$CURRENT_VERSION" ]; then
-            echo "make_latest=true" >> $GITHUB_OUTPUT
-          else
-            echo "make_latest=false" >> $GITHUB_OUTPUT
-          fi
-          echo "Current version: $CURRENT_VERSION"
-          echo "Highest version: $HIGHEST_VERSION"
+          docker run \
+            --mount="type=bind,source=$PWD,destination=${{ env.DOCKER_PWD }}" \
+            --rm=true \
+            --tty=true \
+            --workdir="${{ env.DOCKER_PWD }}" \
+            -e DEBIAN_RELEASE \
+            -e MATTERMOST_VERSION \
+            -e MMCTL_RELEASE \
+            -e MM_FOCALBOARD_RELEASE \
+            -e GOOS \
+            -e GOARCH \
+            -e GO_VERSION \
+            "${{ env.DOCKER_IMAGE }}" \
+            ./build.sh
 
-      - name: Create Github release
-        if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref,'refs/heads/support-') }}
-        uses: softprops/action-gh-release@v2
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
         with:
-          token: ${{ secrets.GH_TOKEN }}
-          tag_name: ${{ env.MATTERMOST_VERSION }}
-          make_latest: ${{ steps.check_version.outputs.make_latest }}
-          files: |
+          name: mattermost-${{ matrix.os }}-${{ matrix.arch }}
+          if-no-files-found: error
+          path: |
             mattermost-${{ env.MATTERMOST_VERSION }}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz
             mattermost-${{ env.MATTERMOST_VERSION }}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz.sha512sum
+
+  release:
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/support-'))
+
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      - name: Set environment from runtime properties
+        run: cat mattermost-release.txt >> "$GITHUB_ENV"
+
+      - name: Normalize tag name
+        run: |
+          if [[ "${MATTERMOST_VERSION}" != v* ]]; then
+            echo "MATTERMOST_VERSION=v${MATTERMOST_VERSION}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: mattermost-*
+          merge-multiple: true
+
+      - name: Create or update GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ github.token }}
+          tag_name: ${{ env.MATTERMOST_VERSION }}
+          target_commitish: ${{ github.sha }}
+          make_latest: ${{ github.ref == 'refs/heads/main' && 'true' || 'false' }}
+          files: |
+            dist/mattermost-${{ env.MATTERMOST_VERSION }}-linux-arm.tar.gz
+            dist/mattermost-${{ env.MATTERMOST_VERSION }}-linux-arm.tar.gz.sha512sum
+            dist/mattermost-${{ env.MATTERMOST_VERSION }}-linux-arm64.tar.gz
+            dist/mattermost-${{ env.MATTERMOST_VERSION }}-linux-arm64.tar.gz.sha512sum
+            dist/mattermost-${{ env.MATTERMOST_VERSION }}-linux-amd64.tar.gz
+            dist/mattermost-${{ env.MATTERMOST_VERSION }}-linux-amd64.tar.gz.sha512sum

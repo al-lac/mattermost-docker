@@ -2,82 +2,105 @@ name: Check for new Mattermost Releases
 
 on:
   schedule:
-    - cron: '0 0 * * *'  # Check every day at midnight
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
 
 jobs:
   check-releases:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - name: Get latest release from the monitored repo
-      id: get_release
-      run: |
-        latest_release=$(curl -s https://api.github.com/repos/mattermost/mattermost/releases/latest | jq -r .tag_name)
-        echo "LATEST_RELEASE=$latest_release" >> $GITHUB_ENV
+      - name: Get latest release from the monitored repo
+        id: get_release
+        run: |
+          latest_release=$(curl -fsSL https://api.github.com/repos/mattermost/mattermost/releases/latest | jq -r .tag_name)
+          if [[ -z "$latest_release" || "$latest_release" == "null" ]]; then
+            echo "Failed to determine latest Mattermost release" >&2
+            exit 1
+          fi
+          echo "LATEST_RELEASE=$latest_release" >> "$GITHUB_ENV"
 
-    - name: Compare with last known release
-      id: compare_release
-      run: |
-        set -o allexport
-        source mattermost-release.txt
-        set +o allexport
+      - name: Compare with last known release
+        id: compare_release
+        run: |
+          set -o allexport
+          source mattermost-release.txt
+          set +o allexport
 
-        echo "Last known release: $MATTERMOST_VERSION"
-        echo "Latest release: ${{ env.LATEST_RELEASE }}"
+          echo "Last known release: $MATTERMOST_VERSION"
+          echo "Latest release: ${{ env.LATEST_RELEASE }}"
 
-        if [ "${{ env.LATEST_RELEASE }}" != "$MATTERMOST_VERSION" ]; then
-          if [[ "${{ env.LATEST_RELEASE }}" =~ v([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+          if [ "${{ env.LATEST_RELEASE }}" = "$MATTERMOST_VERSION" ]; then
+            echo "No new release"
+            echo "NEW_RELEASE=false" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          if [[ "${{ env.LATEST_RELEASE }}" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
             major="${BASH_REMATCH[1]}"
             minor="${BASH_REMATCH[2]}"
-            patch="${BASH_REMATCH[3]}"
-  
-            echo "New release detected"
-
-            # If branch exists, do nothing
-            if git ls-remote --heads origin | grep -q "upgrade-$major.$minor"; then
-              echo "Branch upgrade-$major.$minor already exists"
-              echo "NEW_RELEASE=false" >> $GITHUB_ENV
-              exit 0
-            fi
-
-            # Branch DNE, update MATTERMOST_VERSION
-            sed -i "s/MATTERMOST_VERSION=\(.*\)/MATTERMOST_VERSION=${{ env.LATEST_RELEASE }}/" mattermost-release.txt
-
-            echo "BRANCH_NAME=upgrade-$major.$minor" >> $GITHUB_ENV
-            echo "NEW_RELEASE=true" >> $GITHUB_ENV
+            echo "BRANCH_NAME=upgrade-$major.$minor" >> "$GITHUB_ENV"
+            echo "NEW_RELEASE=true" >> "$GITHUB_ENV"
+          else
+            echo "Unexpected release tag format: ${{ env.LATEST_RELEASE }}" >&2
+            exit 1
           fi
-        else
-          echo "No new release"
-          echo "NEW_RELEASE=false" >> $GITHUB_ENV
-        fi
 
-    - name: Create or update mattermost-release.txt
-      id: set_branch_for_upgrade
-      if: env.NEW_RELEASE == 'true'
-      run: |
-        git config --global user.name 'github-actions'
-        git config --global user.email 'github-actions@github.com'
-        git checkout -b ${{ env.BRANCH_NAME }} || git checkout ${{ env.BRANCH_NAME }}
-        git add mattermost-release.txt
-        git commit -m "chore: Upgrade to ${{ env.LATEST_RELEASE }}"
-        git push origin ${{ env.BRANCH_NAME }}
+      - name: Create or update upgrade branch
+        if: env.NEW_RELEASE == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config --global user.name 'github-actions'
+          git config --global user.email 'github-actions@github.com'
 
-    - name: Create pull request via GitHub CLI
-      if: env.NEW_RELEASE == 'true'
-      env:
-        GH_TOKEN: ${{ secrets.GH_TOKEN }}
-      run: |
-        gh label list | grep -q auto-upgrade || gh label create auto-upgrade \
-          -c FABC7B \
-          -d "Pull requests that upgrade mattermost version automatically"
-        gh pr create \
-          --assignee @me \
-          --base main \
-          --body "" \
-          --head ${{ env.BRANCH_NAME }} \
-          --label auto-upgrade \
-          --reviewer al-lac \
-          --title "Update files for new mattermost release ${{ env.LATEST_RELEASE }}"
+          if git ls-remote --exit-code --heads origin "${{ env.BRANCH_NAME }}" >/dev/null 2>&1; then
+            git fetch origin "${{ env.BRANCH_NAME }}:${{ env.BRANCH_NAME }}"
+            git checkout "${{ env.BRANCH_NAME }}"
+          else
+            git checkout -b "${{ env.BRANCH_NAME }}"
+          fi
+
+          sed -i "s/^MATTERMOST_VERSION=.*/MATTERMOST_VERSION=${{ env.LATEST_RELEASE }}/" mattermost-release.txt
+
+          git add mattermost-release.txt
+          if git diff --cached --quiet; then
+            echo "No file changes to commit"
+            exit 0
+          fi
+
+          git commit -m "chore: Upgrade to ${{ env.LATEST_RELEASE }}"
+          git push origin "${{ env.BRANCH_NAME }}"
+
+      - name: Create pull request via GitHub CLI
+        if: env.NEW_RELEASE == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh pr list --head "${{ env.BRANCH_NAME }}" --base main --state open --json number --jq '.[0].number' | grep -q '^[0-9]\+$'; then
+            echo "PR already exists for ${{ env.BRANCH_NAME }}"
+            exit 0
+          fi
+
+          gh label list | grep -q '^auto-upgrade\b' || gh label create auto-upgrade \
+            -c FABC7B \
+            -d "Pull requests that upgrade mattermost version automatically"
+
+          gh pr create \
+            --assignee @me \
+            --base main \
+            --body "" \
+            --head "${{ env.BRANCH_NAME }}" \
+            --label auto-upgrade \
+            --reviewer al-lac \
+            --title "Update files for new mattermost release ${{ env.LATEST_RELEASE }}"
