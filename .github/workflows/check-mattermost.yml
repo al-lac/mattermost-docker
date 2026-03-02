@@ -97,7 +97,6 @@ jobs:
             -d "Pull requests that upgrade mattermost version automatically"
 
           gh pr create \
-            --assignee @me \
             --base main \
             --body "" \
             --head "${{ env.BRANCH_NAME }}" \
