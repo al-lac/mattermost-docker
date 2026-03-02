@@ -3,7 +3,9 @@ name: Docker build and Publish
 on:
   push:
     tags:
-      - v*
+      - 'v*'
+    branches-ignore:
+      - '**'
   workflow_dispatch:
     inputs:
       tag:
