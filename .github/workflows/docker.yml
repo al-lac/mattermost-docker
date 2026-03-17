@@ -36,9 +36,9 @@ jobs:
       - name: Set tag
         id: meta
         run: |
-          TAG="${{ github.ref_name }}"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "${{ github.event_name }}" = "workflow_call" ]; then
-            TAG="${{ inputs.tag }}"
+          TAG="${{ inputs.tag }}"
+          if [ -z "$TAG" ]; then
+            TAG="${{ github.ref_name }}"
           fi
           if [[ "$TAG" != v* ]]; then
             echo "Tag must start with 'v' (got: $TAG)" >&2
