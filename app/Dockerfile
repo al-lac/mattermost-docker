@@ -30,11 +30,15 @@ RUN apk add --no-cache \
 
 # Get Mattermost
 RUN mkdir -p /mattermost/data /mattermost/plugins /mattermost/client/plugins \
-        && curl -L https://github.com/al-lac/mattermost-docker/releases/download/${MM_VERSION}/mattermost-${MM_VERSION}-${TARGETOS}-${TARGETARCH}.tar.gz | tar -C /mattermost --strip-components=1 -xvz \
+        && MM_ARTIFACT="mattermost-${MM_VERSION}-${TARGETOS}-${TARGETARCH}.tar.gz" \
+        && MM_URL="https://github.com/al-lac/mattermost-docker/releases/download/${MM_VERSION}/${MM_ARTIFACT}" \
+        && curl --fail --show-error --location --retry 12 --retry-all-errors --retry-delay 5 --output "/tmp/${MM_ARTIFACT}" "${MM_URL}" \
+        && tar -C /mattermost --strip-components=1 -xvzf "/tmp/${MM_ARTIFACT}" \
+        && rm -f "/tmp/${MM_ARTIFACT}" \
         && cp /mattermost/config/config.json /mattermost/config.json.save \
         && rm -rf /mattermost/config/config.json \
         && addgroup -g ${PGID} mattermost \
-        && adduser -D -u ${PUID} -G mattermost -h /mattermost -D mattermost \
+        && adduser -D -u ${PUID} -G mattermost -h /mattermost mattermost \
         && chown -R mattermost:mattermost /mattermost/config.json.save /mattermost/plugins /mattermost/client/plugins \
         && setcap cap_net_bind_service=+ep /mattermost/bin/mattermost
 
