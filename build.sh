@@ -8,7 +8,7 @@ DEBIAN_RELEASE="${DEBIAN_RELEASE:-bookworm}"
 # Mattermost version to build
 MATTERMOST_VERSION="${MATTERMOST_VERSION:-v5.26.0}"
 # golang version
-GO_VERSION="${GO_VERSION:-1.20.8}"
+GO_VERSION="${GO_VERSION:-1.26.3}"
 
 if [ "$(id -u)" -eq 0 ]; then # as root user
 	# create build user, if needed
@@ -117,6 +117,13 @@ if [ "$(go env GOARCH)" = "arm" ]; then
 		sed -i \
 			-e 's#return info.Totalram \* uint64(info.Unit)#return uint64(info.Totalram) * uint64(info.Unit)#' \
 			"${MEMORY_LINUX_FILE}"
+	fi
+
+	DISK_LINUX_FILE="${HOME}/go/src/github.com/mattermost/mattermost/server/channels/app/platform/disk_linux.go"
+	if grep -Fq 'FilesystemType: fsTypeToString(stat.Type),' "${DISK_LINUX_FILE}"; then
+		sed -i \
+			-e 's#FilesystemType: fsTypeToString(stat.Type),#FilesystemType: fsTypeToString(int64(stat.Type)),#' \
+			"${DISK_LINUX_FILE}"
 	fi
 fi
 
