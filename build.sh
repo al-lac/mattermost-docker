@@ -118,6 +118,13 @@ if [ "$(go env GOARCH)" = "arm" ]; then
 			-e 's#return info.Totalram \* uint64(info.Unit)#return uint64(info.Totalram) * uint64(info.Unit)#' \
 			"${MEMORY_LINUX_FILE}"
 	fi
+
+	DISK_LINUX_FILE="${HOME}/go/src/github.com/mattermost/mattermost/server/channels/app/platform/disk_linux.go"
+	if grep -Fq 'FilesystemType: fsTypeToString(stat.Type),' "${DISK_LINUX_FILE}"; then
+		sed -i \
+			-e 's#FilesystemType: fsTypeToString(stat.Type),#FilesystemType: fsTypeToString(int64(stat.Type)),#' \
+			"${DISK_LINUX_FILE}"
+	fi
 fi
 
 sed -i \
