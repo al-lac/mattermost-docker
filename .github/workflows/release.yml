@@ -39,7 +39,7 @@ jobs:
 
     steps:
       - name: Clone repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set environment from runtime properties
         run: cat mattermost-release.txt >> "$GITHUB_ENV"
@@ -85,7 +85,7 @@ jobs:
 
     steps:
       - name: Clone repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set environment from runtime properties
         run: cat mattermost-release.txt >> "$GITHUB_ENV"
